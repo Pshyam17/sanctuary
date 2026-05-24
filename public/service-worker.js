@@ -1,4 +1,4 @@
-const CACHE_NAME = "sanctuary-v1"
+const CACHE_NAME = "sanctuary-v2"
 const APP_SHELL = ["/", "/index.html", "/manifest.json"]
 
 self.addEventListener("install", (e) => {
@@ -12,6 +12,9 @@ self.addEventListener("activate", (e) => {
 })
 
 self.addEventListener("fetch", (e) => {
+  // never cache or intercept API calls or non-GET requests — they must go straight to network
+  const url = new URL(e.request.url)
+  if (e.request.method !== "GET" || url.pathname.startsWith("/api/")) return
   e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request)))
 })
 
