@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai"
 import { saveSchedule, getSchedule } from "./idb"
 import { KEYS, loadJSON, saveJSON, emitUpdate } from "../lib/storage"
+import { GEMINI_MODEL, safeResponseText } from "./model"
 
 function buildSchedulePrompt(ctx) {
   const tasks = loadJSON(KEYS.tasks, [])
@@ -78,10 +79,10 @@ export async function generateSchedule(context) {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY
   if (!apiKey) return []
   const genAI = new GoogleGenerativeAI(apiKey)
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
+  const model = genAI.getGenerativeModel({ model: GEMINI_MODEL })
   const prompt = buildSchedulePrompt(context)
   const result = await model.generateContent(prompt)
-  const raw = parseScheduleJson(result.response.text())
+  const raw = parseScheduleJson(safeResponseText(result.response))
   const schedule = raw.map((item, idx) => ({
     ...item,
     id: `${Date.now()}-${idx}`,
@@ -119,11 +120,11 @@ export async function regenerateSlots({ reason, new_energy }) {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY
   if (!apiKey) return current
   const genAI = new GoogleGenerativeAI(apiKey)
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
+  const model = genAI.getGenerativeModel({ model: GEMINI_MODEL })
   const prompt = `${buildSchedulePrompt({ energy_level: energy, movement_type: "walk", notes: reason })}
 Only regenerate afternoon and evening slots (2pm onwards). Return JSON array.`
   const result = await model.generateContent(prompt)
-  const afternoon = parseScheduleJson(result.response.text())
+  const afternoon = parseScheduleJson(safeResponseText(result.response))
   const now = new Date()
   const kept = current.filter((n) => {
     const [time, ampm] = n.time.split(/(am|pm)/i)

@@ -40,7 +40,10 @@ export default function Chat() {
       setMessages([...next, { role: "assistant", text: res.text || "Done." }])
       localStorage.setItem(KEYS.lastCheckinMsg, userText)
     } catch (err) {
-      setMessages([...next, { role: "assistant", text: "Connection issue. Try again in a moment." }])
+      const msg = err?.message?.includes("429")
+        ? "Gemini quota limit — wait a few minutes and try again."
+        : "Connection issue. Try again in a moment."
+      setMessages([...next, { role: "assistant", text: msg }])
     } finally {
       setTyping(false)
     }

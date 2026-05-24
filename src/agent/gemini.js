@@ -4,6 +4,7 @@ import { buildSystemPrompt } from "./systemPrompt"
 import { generateSchedule, regenerateSlots } from "./scheduler"
 import { saveSchedule, getSchedule } from "./idb"
 import { KEYS, loadJSON, saveJSON, emitUpdate } from "../lib/storage"
+import { GEMINI_MODEL, formatGeminiError, safeResponseText } from "./model"
 
 function loadState() {
   const tasks = loadJSON(KEYS.tasks, [])
@@ -114,11 +115,11 @@ async function executeFunction(call) {
     case "draft_message": {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY
       const genAI = new GoogleGenerativeAI(apiKey)
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
+      const model = genAI.getGenerativeModel({ model: GEMINI_MODEL })
       const draft = await model.generateContent(
         `Draft a ${args.type} for Preethi. Context: ${args.context}. Direct, warm, no exclamation marks. Ready to copy.`,
       )
-      result = { draft: draft.response.text() }
+      result = { draft: safeResponseText(draft.response) }
       break
     }
     case "regenerate_slot":
@@ -144,101 +145,117 @@ export async function sendToSanctuary(message, history = []) {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY
   if (!apiKey) return { text: "Add your Gemini API key in .env.local first.", calls: [] }
 
-  const state = loadState()
-  const genAI = new GoogleGenerativeAI(apiKey)
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.0-flash",
-    tools,
-    systemInstruction: buildSystemPrompt({
-      avoiding: state.profile.avoiding || [],
-      emotionalState: state.emotionalState,
-      energyLevel: state.energyLevel,
-      activeTasks: state.tasks.filter((t) => !t.done).map((t) => t.text),
-    }),
-  })
-
-  const chatHistory = history
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .slice(-12)
-    .map((m) => ({
-      role: m.role === "user" ? "user" : "model",
-      parts: [{ text: m.text }],
-    }))
-
-  const chat = model.startChat({ history: chatHistory })
-  let result = await chat.sendMessage(message)
-  let response = result.response
-  const allCalls = []
-  const meta = []
-
-  let guard = 0
-  while (response.functionCalls()?.length && guard < 6) {
-    guard += 1
-    const calls = response.functionCalls()
-    allCalls.push(...calls)
-    const functionResponses = []
-    for (const call of calls) {
-      const fr = await executeFunction(call)
-      functionResponses.push(fr)
-      meta.push({ name: call.name, result: fr.functionResponse.response })
-    }
-    result = await chat.sendMessage(functionResponses)
-    response = result.response
-  }
-
-  if (shouldAutoSchedule(message, allCalls)) {
-    const energy = inferEnergy(message)
-    const movement = inferMovement(energy)
-    localStorage.setItem(KEYS.lastCheckinMsg, message)
-    await generateSchedule({
-      energy_level: energy,
-      movement_type: movement,
-      focus_area: "mixed",
-      notes: message,
+  try {
+    const state = loadState()
+    const genAI = new GoogleGenerativeAI(apiKey)
+    const model = genAI.getGenerativeModel({
+      model: GEMINI_MODEL,
+      tools,
+      systemInstruction: buildSystemPrompt({
+        avoiding: state.profile.avoiding || [],
+        emotionalState: state.emotionalState,
+        energyLevel: state.energyLevel,
+        activeTasks: state.tasks.filter((t) => !t.done).map((t) => t.text),
+      }),
     })
-    allCalls.push({ name: "set_day_schedule", args: { energy_level: energy, movement_type: movement } })
-  }
 
-  const lower = message.toLowerCase()
-  if (/\b(exhaust|bad day|really struggling|can't do)\b/.test(lower) && !allCalls.some((c) => c.name === "set_emotional_state")) {
-    localStorage.setItem(KEYS.emotional, "hollow")
-    const e = Math.max(1, Number(localStorage.getItem(KEYS.energy) || 3) - 2)
-    localStorage.setItem(KEYS.energy, String(e))
-    await regenerateSlots({ reason: message, new_energy: e })
-    emitUpdate()
-  }
+    const chatHistory = history
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .slice(-12)
+      .map((m) => ({
+        role: m.role === "user" ? "user" : "model",
+        parts: [{ text: m.text }],
+      }))
 
-  const draft = meta.find((m) => m.name === "draft_message")?.result?.draft
-  let text = response.text() || ""
-  if (!text && draft) text = "Here's your draft — copy below."
-  return { text: text || "Done.", calls: allCalls, meta }
+    const chat = model.startChat({ history: chatHistory })
+    let result = await chat.sendMessage(message)
+    let response = result.response
+    const allCalls = []
+    const meta = []
+
+    let guard = 0
+    while (response.functionCalls()?.length && guard < 6) {
+      guard += 1
+      const calls = response.functionCalls()
+      allCalls.push(...calls)
+      const functionResponses = []
+      for (const call of calls) {
+        const fr = await executeFunction(call)
+        functionResponses.push(fr)
+        meta.push({ name: call.name, result: fr.functionResponse.response })
+      }
+      result = await chat.sendMessage(functionResponses)
+      response = result.response
+    }
+
+    if (shouldAutoSchedule(message, allCalls)) {
+      const energy = inferEnergy(message)
+      const movement = inferMovement(energy)
+      localStorage.setItem(KEYS.lastCheckinMsg, message)
+      await generateSchedule({
+        energy_level: energy,
+        movement_type: movement,
+        focus_area: "mixed",
+        notes: message,
+      })
+      allCalls.push({ name: "set_day_schedule", args: { energy_level: energy, movement_type: movement } })
+    }
+
+    const lower = message.toLowerCase()
+    if (
+      /\b(exhaust|bad day|really struggling|can't do)\b/.test(lower) &&
+      !allCalls.some((c) => c.name === "set_emotional_state")
+    ) {
+      localStorage.setItem(KEYS.emotional, "hollow")
+      const e = Math.max(1, Number(localStorage.getItem(KEYS.energy) || 3) - 2)
+      localStorage.setItem(KEYS.energy, String(e))
+      await regenerateSlots({ reason: message, new_energy: e })
+      emitUpdate()
+    }
+
+    const draft = meta.find((m) => m.name === "draft_message")?.result?.draft
+    let text = safeResponseText(response)
+    if (!text && draft) text = "Here's your draft — copy below."
+    if (!text && allCalls.length) text = "Updated. Check Notifications or Path for changes."
+    return { text: text || "Done.", calls: allCalls, meta }
+  } catch (err) {
+    return { text: formatGeminiError(err), calls: [], meta: [], error: true }
+  }
 }
 
 export async function generateTaskBreakdown(taskText) {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY
   if (!apiKey) return null
-  const emotional = localStorage.getItem(KEYS.emotional)
-  const genAI = new GoogleGenerativeAI(apiKey)
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
-  const prompt = `Preethi added this task while feeling ${emotional || "overwhelmed"}: "${taskText}"
+  try {
+    const emotional = localStorage.getItem(KEYS.emotional)
+    const genAI = new GoogleGenerativeAI(apiKey)
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL })
+    const prompt = `Preethi added this task while feeling ${emotional || "overwhelmed"}: "${taskText}"
 Return ONLY JSON: {"microstep":"under 2 min action","next_steps":["step2","step3"],"note":"warm direct note, no toxic positivity, no exclamation marks"}`
-  const result = await model.generateContent(prompt)
-  const text = result.response.text().replace(/```json|```/g, "").trim()
-  const start = text.indexOf("{")
-  const end = text.lastIndexOf("}")
-  return JSON.parse(text.slice(start, end + 1))
+    const result = await model.generateContent(prompt)
+    const text = safeResponseText(result.response).replace(/```json|```/g, "").trim()
+    const start = text.indexOf("{")
+    const end = text.lastIndexOf("}")
+    return JSON.parse(text.slice(start, end + 1))
+  } catch {
+    return null
+  }
 }
 
 export async function generateFuelParagraph(profile) {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY
   if (!apiKey) return "Add your API key to generate fuel."
-  const genAI = new GoogleGenerativeAI(apiKey)
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" })
-  const prompt = `Write 4-5 sentences for Preethi. Style: Dean Graziosi warmth + real friend who gets mental health + tech founder directness.
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey)
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL })
+    const prompt = `Write 4-5 sentences for Preethi. Style: Dean Graziosi warmth + real friend who gets mental health + tech founder directness.
 Profile: student visa CPT/OPT, anxiety/dissociation/depression, skates and walks, wants own apartment and tech career.
 Currently avoiding: ${(profile.avoiding || []).join(", ") || "unknown"}
 Emotional state: ${localStorage.getItem(KEYS.emotional) || "not set"}
 Rules: no "you've got this", no "believe in yourself", no exclamation marks. Reference at least one specific detail (apartment, visa, skating, career, dissociation).`
-  const result = await model.generateContent(prompt)
-  return result.response.text()
+    const result = await model.generateContent(prompt)
+    return safeResponseText(result.response) || formatGeminiError(new Error("empty response"))
+  } catch (err) {
+    return formatGeminiError(err)
+  }
 }
