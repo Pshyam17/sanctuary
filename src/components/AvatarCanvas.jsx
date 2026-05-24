@@ -85,7 +85,7 @@ function drawStone(ctx, s, t) {
   roundRect(ctx, cx - 11, cy - 4, 22, 22, 4)
   ctx.fillStyle = grad
   ctx.fill()
-  ctx.strokeStyle = "rgba(255,255,255,0.08)"
+  ctx.strokeStyle = "rgba(255,255,255,0.2)"
   ctx.lineWidth = 0.8
   for (let i = 0; i < 3; i++) {
     ctx.beginPath()

@@ -34,3 +34,21 @@ export async function getSchedule() {
     req.onerror = rej
   })
 }
+
+export async function markSent(id) {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite")
+    const store = tx.objectStore(STORE)
+    const req = store.get(id)
+    req.onsuccess = () => {
+      const notif = req.result
+      if (notif) {
+        notif.sent = true
+        store.put(notif)
+      }
+      tx.oncomplete = () => resolve()
+    }
+    req.onerror = () => reject(req.error)
+  })
+}
