@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import BookQuote from "../components/BookQuote"
 import { useTypewriter } from "../hooks/useTypewriter"
 import { useProfile } from "../hooks/useProfile"
-import { generateFuelParagraph } from "../agent/gemini"
+import { generateFuelParagraph } from "../agent/agent"
 
 export default function Fuel() {
   const { profile } = useProfile()

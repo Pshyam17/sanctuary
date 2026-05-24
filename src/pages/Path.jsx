@@ -4,7 +4,7 @@ import RewardFlash from "../components/RewardFlash"
 import { matchLifeChain } from "../data/lifeChains"
 import { useTasks } from "../hooks/useTasks"
 import { useProfile } from "../hooks/useProfile"
-import { generateTaskBreakdown } from "../agent/gemini"
+import { generateTaskBreakdown } from "../agent/agent"
 
 export default function Path() {
   const [input, setInput] = useState("")

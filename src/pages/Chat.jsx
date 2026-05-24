@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useLocation } from "react-router-dom"
-import { sendToSanctuary } from "../agent/gemini"
+import { sendToSanctuary } from "../agent/agent"
 import { useChat } from "../hooks/useChat"
 import { KEYS } from "../lib/storage"
 
@@ -41,7 +41,7 @@ export default function Chat() {
       localStorage.setItem(KEYS.lastCheckinMsg, userText)
     } catch (err) {
       const msg = err?.message?.includes("429")
-        ? "Gemini quota limit — wait a few minutes and try again."
+        ? "NIM rate limit — wait a moment and try again."
         : "Connection issue. Try again in a moment."
       setMessages([...next, { role: "assistant", text: msg }])
     } finally {
