@@ -1,10 +1,12 @@
 /**
  * NVIDIA NIM clients for Sanctuary.
- * One API key (VITE_NIM_API_KEY) hits the OpenAI-compatible endpoint.
+ * Calls go through our own /api/nim proxy so:
+ *   1. The API key stays server-side (never in the browser bundle).
+ *   2. We sidestep NIM's missing CORS headers.
  * Split by complexity so cheap calls (8B) don't burn the same credits as chat (70B).
  */
 
-const ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
+const ENDPOINT = "/api/nim"
 
 export const MODELS = {
   HEAVY: "meta/llama-3.3-70b-instruct",
@@ -12,32 +14,26 @@ export const MODELS = {
   LIGHT: "meta/llama-3.1-8b-instruct",
 }
 
-function getKey() {
-  return import.meta.env.VITE_NIM_API_KEY
-}
-
 export function hasKey() {
-  return Boolean(getKey())
+  // Key lives on the server; client just trusts the proxy is configured.
+  return true
 }
 
 async function callNim(body) {
-  const key = getKey()
-  if (!key) throw new Error("VITE_NIM_API_KEY missing — add it to .env.local and Vercel.")
   const res = await fetch(ENDPOINT, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
   if (!res.ok) {
     const errText = await res.text().catch(() => "")
     const status = res.status
-    if (status === 401 || status === 403) throw new Error(`NIM auth failed (${status}). Check VITE_NIM_API_KEY.`)
+    if (status === 401 || status === 403) throw new Error(`NIM auth failed (${status}). Check NIM_API_KEY on Vercel.`)
     if (status === 429) throw new Error("NIM rate limit hit. Wait a moment and retry.")
     if (status === 404) throw new Error(`NIM model not found. ${errText.slice(0, 120)}`)
+    if (status === 500 && /NIM_API_KEY missing/.test(errText)) {
+      throw new Error("Server is missing NIM_API_KEY. Add it in Vercel env vars.")
+    }
     throw new Error(`NIM ${status}: ${errText.slice(0, 160)}`)
   }
   return res.json()
